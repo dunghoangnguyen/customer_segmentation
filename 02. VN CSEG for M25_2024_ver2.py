@@ -26,7 +26,7 @@ pd.set_option('display.max_columns', 200)
 
 # COMMAND ----------
 
-image_date = '2024-02-29'
+image_date = '2024-04-30'
 image_date_sht = image_date[:7].replace('-', '')
 image_year = int(image_date[:4])
 
@@ -54,16 +54,19 @@ print(image_date, image_date_sht, image_year)
 
 cseg_df = spark.read.parquet(f'{cseg_path}').toPandas()
 aseg_df = spark.read.parquet(f'{aseg_path}').toPandas()
-target_activation_df = spark.read.parquet(f'{target_path}').toPandas()
+target_activation_df = spark.read.parquet(f'{target_path}')
+target_activation_pd = target_activation_df.toPandas()
 
 mclass_df = spark.read.csv(f'{mclass_path}multiclass_scored_{image_date_sht}.csv', header=True, inferSchema=True).toPandas()
 
-target_activation_df.drop(columns=['channel','cur_age_y','rn','loc_code','__index_level_0__'], inplace=True)
-target_activation_df.rename(columns={'cur_age_x': 'cur_age', 'tier': 'current_tier', 'channel_final': 'channel', 'protection_gap_v2': 'protection_gap'}, inplace=True)
-print('# customers with 0 APE:', target_activation_df.shape[0])
-# Remove customers having 0 APE
-target_activation_df = target_activation_df[target_activation_df['total_ape_usd']>0]
-print('# customers w/o 0 APE:', target_activation_df.shape[0])
+# List of columns to drop: 'channel','cur_age_y','rn','loc_code','__index_level_0__'
+target_activation_pd.drop(columns=['__index_level_0__'], inplace=True)
+#target_activation_pd.rename(columns={'cur_age_x': 'cur_age', 'tier': 'current_tier', 'channel_final': 'channel', 'protection_gap_v2': 'protection_gap'}, inplace=True)
+print('# customers incl. 0 APE:', target_activation_pd.shape[0])
+# Remove customers having 0 APE and customers who are agents
+target_activation_pd = target_activation_pd[(target_activation_pd['total_ape'] > 0) & 
+                                            (target_activation_pd['f_owner_is_agent'] == 0)]
+print('# customers excl. 0 APE:', target_activation_pd.shape[0])
 
 # COMMAND ----------
 
@@ -84,13 +87,22 @@ claim_df = claim_df.filter(
     (F.months_between(F.col('CLM_APROV_DT'), F.add_months(F.to_date(F.lit(image_date), 'yyyy-MM-dd'), -6)) <= 6) &
     (F.col('CLM_APROV_DT') <= F.to_date(F.lit(image_date), 'yyyy-MM-dd')) &
     (F.col('CLM_STAT_CODE').isin(['A'])) &
-    (F.col('CLM_CODE').isin([3, 7, 8, 11, 27]))
-).select('POL_NUM','CLM_ID','CLM_APROV_AMT')\
+    (F.col('CLM_CODE').isin([3, 7, 9, 11, 27, 28, 29, 36, 38, 50, 51]))
+).select('POL_NUM','CLM_ID','CLM_APROV_AMT', 'CLM_APROV_DT')\
     
+# Add columns for the last claim date and amount
+window_spec = Window.partitionBy('POL_NUM').orderBy(F.col('CLM_APROV_DT').desc())
+
+claim_df = claim_df.withColumn('clm_lst_dt', F.first(F.col('CLM_APROV_DT')).over(window_spec)) \
+                   .withColumn('clm_lst_amt', F.first(F.col('CLM_APROV_AMT')).over(window_spec))
+
+# Perform the aggregation and join
 claim_df = claim_df.groupby('POL_NUM')\
     .agg(
-        F.count('CLM_ID').alias('claim_6m_cnt'),
-        F.sum('CLM_APROV_AMT').alias('claim_6m_amt')
+        F.count('CLM_ID').cast('int').alias('claim_6m_cnt'),
+        F.sum('CLM_APROV_AMT').cast('float').alias('claim_6m_amt'),
+        F.max('clm_lst_dt').cast('date').alias('clm_lst_dt'),
+        F.first('clm_lst_amt').cast('float').alias('clm_lst_amt')
     )
 
 # Lowercase all column names in the DataFrame
@@ -103,9 +115,13 @@ for col in claim_df.columns:
 claim_po_df = policy_df.join(claim_df, on='pol_num')\
     .groupby('po_num')\
     .agg(
-        F.sum(F.col('claim_6m_cnt')).cast('float').alias('clm_6m_cnt'),
-        F.sum(F.col('claim_6m_amt')/23.145).cast('float').alias('clm_6m_amt')
-    ).toPandas().drop_duplicates()
+        F.sum(F.col('claim_6m_cnt')).cast('int').alias('clm_6m_cnt'),
+        (F.sum(F.col('claim_6m_amt')/23.145)).cast('float').alias('clm_6m_amt'),
+        F.max('clm_lst_dt').cast('date').alias('clm_lst_dt'),
+        F.first('clm_lst_amt').cast('float').alias('clm_lst_amt')
+    ).dropDuplicates()
+    
+claim_po_df = claim_po_df.toPandas()
 
 claim_po_df.shape
 
@@ -120,8 +136,8 @@ claim_po_df.shape
 mclass_df = mclass_df[mclass_df['DEPLOYMENT_APPROVAL_STATUS']=='APPROVED']
 mclass_df['po_num'] = mclass_df['po_num'].astype(str)
 
-target_po_list = target_activation_df['po_num'].unique()
-target_agt_list = target_activation_df['agt_code'].unique()
+target_po_list = target_activation_pd['po_num'].unique()
+target_agt_list = target_activation_pd['agt_code'].unique()
 
 cseg_df = cseg_df[cseg_df['po_num'].isin(target_po_list)]
 aseg_df = aseg_df[aseg_df['agt_cd'].isin(target_agt_list)]
@@ -140,15 +156,16 @@ aseg_df = aseg_df[aseg_df['agt_cd'].isin(target_agt_list)]
 
 mclass_cols = ['po_num','rep_purchase_comb_health_base_PREDICTION','rep_purchase_comb_health_rider_PREDICTION', 'rep_purchase_comb_inv_base_PREDICTION','rep_purchase_comb_riders_PREDICTION','rep_purchase_comb_term_base_PREDICTION', 'rep_purchase_comb_PREDICTION'
                ]
-cseg_cols = ['po_num','sex_code','dpnd_child_ind','dpnd_spouse_ind','existing_vip_seg','f_trmn_0_6m','f_trmn_6_12m','f_trmn_12_18m','f_vip_elite','f_vip_gold','f_vip_plat','f_vip_silver','ins_typ_count','total_ape','tot_face_amt_usd','wallet_rem','claim_amount'
+
+cseg_cols = ['po_num','sex_code','dpnd_child_ind','dpnd_spouse_ind','existing_vip_seg','f_trmn_0_6m','f_trmn_6_12m','f_trmn_12_18m','f_vip_elite','f_vip_gold','f_vip_plat','f_vip_silver','ins_typ_count','total_ape','tot_face_amt_usd','wallet_rem','claim_amount', 'decile'
              ]
 
 aseg_cols = ['agt_cd','next_tier','next_tier_benchmark','gap_to_next_tier','all_pol_cnt'
 ]
 
-merged_target_activation_df = target_activation_df\
+#.merge(cseg_df[cseg_cols], on='po_num', how='left')\
+merged_target_activation_df = target_activation_pd\
   .merge(mclass_df[mclass_cols], on='po_num', how='left')\
-  .merge(cseg_df[cseg_cols], on='po_num', how='left')\
   .merge(claim_po_df, on='po_num', how='left')\
   .merge(aseg_df[aseg_cols], left_on='agt_code', right_on='agt_cd', how='left')\
   .merge(agt_tot_ape_df, left_on='agt_code', right_on='wa_code', how='left')
@@ -156,7 +173,7 @@ merged_target_activation_df = target_activation_df\
 merged_target_activation_df.columns = map(str.lower, merged_target_activation_df.columns)
 
 # Select numeric columns
-numeric_columns = merged_target_activation_df.select_dtypes(include=['float32', 'float64']).columns
+numeric_columns = merged_target_activation_df.select_dtypes(include=['int8','int16','int32','float32','float64']).columns
 
 # Fill NaN with 0 for each numeric column
 for col in numeric_columns:
@@ -171,6 +188,8 @@ categorical_columns = merged_target_activation_df.select_dtypes(include=['catego
 for col in categorical_columns:
     merged_target_activation_df[col] = merged_target_activation_df[col].cat.add_categories("N/A")
     merged_target_activation_df[col] = merged_target_activation_df[col].fillna("N/A")
+
+merged_target_activation_df.drop_duplicates(inplace=True)
 
 print(merged_target_activation_df.shape)
 merged_target_activation_df.head(2)
@@ -208,25 +227,27 @@ merged_target_activation_df.head(2)
 
 # Define bins and labels for each column to be binned
 bins_labels = [
-    # For 'total_ape_usd'
-    ('total_ape_usd', [0, 1000, 2000, 3000, 5000, 7000, 10000, float('inf')], 
+    # For 'total_ape'
+    ('total_ape', [0, 1000, 2000, 3000, 5000, 7000, 10000, np.inf], 
      ['1. <=1k', '2. 1-2k', '3. 2-3k', '4. 3-5k', '5. 5-7k', '6. 7-10k', '7. >10k']),
-    ('adj_mthly_incm', [500, 1000, 1500, 2000, 3000, 5000, float('inf')],
+    ('adj_mthly_incm', [500, 1000, 1500, 2000, 3000, 5000, np.inf],
      ['1. 500-1k', '2. 1-1.5k', '3. 1.5-2k', '4. 2-3k', '5. 3-5k', '6. >5k']),
-    ('protection_income%', [0, 10.01, 25, 50, float('inf')],
-     ['1. >90%', '2. 75-90%', '4. 50-75%', '5. <50%']),
-    ('no_dpnd', [0, 0.1, 1, 2, float('inf')],
+    #('protection_income%', [0, 10.01, 25, 50, np.inf],
+    # ['1. >90%', '2. 75-90%', '4. 50-75%', '5. <50%']),
+    ('no_dpnd', [0, 0.1, 1, 2, np.inf],
      ['0', '1', '2', '3+']),
-    ('clm_6m_cnt', [0, 0.1, 1, 2, 4, float('inf')],
+    ('clm_6m_cnt', [0, 0.1, 1, 2, 4, np.inf],
      ['0', '1', '2', '3-4', '5+']),
-    ('clm_6m_ratio', [0, 0.25, 0.5, 0.75, float('inf')],
+    ('clm_6m_ratio', [0, 0.25, 0.5, 0.75, np.inf],
      ['<= 25%', '<= 50%', '<=75%', '>75%']),
-    ('ins_typ_count', [0, 1, 2, float('inf')],
+    ('ins_typ_count', [0, 1, 2, np.inf],
      ['1', '2', '2+']),
     # Add new features
-    ('cur_age', [0, 24, 30, 35, 40, 45, 50, 55, float('inf')],
+    ('rider_cnt', [0, 1, 2, 3, 5, np.inf],
+     ['1', '2', '3', '4-5', '5+']),
+    ('cur_age', [0, 24, 30, 35, 40, 45, 50, 55, np.inf],
      ['<25', '25-30', '31-35', '36-40', '41-45', '46-50', '51-55', '55+']),
-    ('gap_to_next_tier', [0, 20000, 50000, 75000, 100000, 150000, 200000, 250000, 300000, float('inf')],
+    ('gap_to_next_tier', [0, 20000, 50000, 75000, 100000, 150000, 200000, 250000, 300000, np.inf],
      ['<=20m', '20-50m', '50-75m', '75-100m', '100-150m', '150-200m', '200-250m', '250-300m', '300m+'])
 ]
 
@@ -273,7 +294,7 @@ add_group_column(merged_target_activation_df, group_conditions, group_choices, '
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ###2.3 Store detailed data for future sizing
+# MAGIC ###2.3 Store the detailed data for future sizing
 
 # COMMAND ----------
 
@@ -289,13 +310,13 @@ merged_target_activation_df.to_parquet(f'{out_path}merged_target_activation.parq
 # COMMAND ----------
 
 # Reload the saved data
-merged_target_activation_df = pd.read_parquet(f'{out_path}merged_target_activation.parquet', engine='pyarrow')
-merged_target_activation_df.shape
+merged_target_activation_pd = pd.read_parquet(f'{out_path}merged_target_activation.parquet', engine='pyarrow')
+merged_target_activation_pd.shape
 
 # COMMAND ----------
 
 # Remove unassigned customers from analysis
-nonucm_target_activation_df = merged_target_activation_df[merged_target_activation_df['pure_unassigned_label']=='Not Pure UCM']
+nonucm_target_activation_df = merged_target_activation_pd[merged_target_activation_pd['unassigned_ind']==0]
 nonucm_target_activation_df.shape
 
 # COMMAND ----------
@@ -310,21 +331,21 @@ nonucm_target_activation_df.shape
 
 # COMMAND ----------
 
-result_df = nonucm_target_activation_df.groupby(['segmentation_rules', 'rep_purchase_comb_prediction', 'age_grp', 'adj_mthly_incm_cat', #'total_ape_usd_cat', 
+'''result_df = nonucm_target_activation_df.groupby(['segmentation_rules', 'rep_purchase_comb_prediction', 'age_grp', 'adj_mthly_incm_cat', #'total_ape_usd_cat', 
                                                  'protection_income_grp', 'tenure_grp', #'br_nm'
                                                  ])\
     .agg({
         'po_num': 'nunique'
     })\
     .reset_index()\
-    .loc[lambda x: x['po_num'] > 0]
+    .loc[lambda x: x['po_num'] > 0] '''
 
 # Displaying the result
 #result_df
 
 # COMMAND ----------
 
-result_df.to_csv(f'{out_path}target_activation_analysis_v1.csv', header=True)
+#result_df.to_csv(f'{out_path}target_activation_analysis_v1.csv', header=True)
 
 # COMMAND ----------
 
@@ -333,18 +354,18 @@ result_df.to_csv(f'{out_path}target_activation_analysis_v1.csv', header=True)
 
 # COMMAND ----------
 
-result_df = nonucm_target_activation_df.groupby(['mar_stat_cat', 'no_dpnd_cat', 'age_grp', 'adj_mthly_incm_cat', 'protection_income_grp', 'protection_income%_cat', 'ins_typ_count_cat', 'clm_6m_ratio_cat', 'tenure_grp', 'cus_vip_cat'
+'''result_df = nonucm_target_activation_df.groupby(['mar_stat_cat', 'no_dpnd_cat', 'age_grp', 'adj_mthly_incm_cat', 'protection_income_grp', 'protection_income%_cat', 'ins_typ_count_cat', 'clm_6m_ratio_cat', 'tenure_grp', 'cus_vip_cat'
                                                  ])\
     .agg({
         'po_num': 'nunique'
     }).reset_index()\
-    .loc[lambda x: x['po_num'] > 0]
+    .loc[lambda x: x['po_num'] > 0] '''
 
 #result_df
 
 # COMMAND ----------
 
-result_df.to_csv(f'{out_path}target_activation_analysis_v2.csv', header=True)
+#result_df.to_csv(f'{out_path}target_activation_analysis_v2.csv', header=True)
 
 # COMMAND ----------
 
@@ -353,7 +374,7 @@ result_df.to_csv(f'{out_path}target_activation_analysis_v2.csv', header=True)
 
 # COMMAND ----------
 
-result_df = nonucm_target_activation_df.groupby(['group', 'protection_income%_cat', 'segmentation_rules',
+'''result_df = nonucm_target_activation_df.groupby(['group', 'protection_income%_cat', 'segmentation_rules',
                                                  'cur_age_cat'
                                                  ])\
     .agg({
@@ -361,11 +382,11 @@ result_df = nonucm_target_activation_df.groupby(['group', 'protection_income%_ca
     }).reset_index()\
     .loc[lambda x: x['po_num'] > 0]
 
-result_df
+result_df '''
 
 # COMMAND ----------
 
-result_df.to_csv(f'{out_path}target_activation_analysis_v3.csv', header=True)
+#result_df.to_csv(f'{out_path}target_activation_analysis_v3.csv', header=True)
 
 # COMMAND ----------
 
@@ -389,7 +410,8 @@ result_df.to_csv(f'{out_path}target_activation_analysis_v3.csv', header=True)
 # COMMAND ----------
 
 # Select the columns of interest for statistics calculations
-columns_of_interest = ['cur_age', 'adj_mthly_incm', 'no_dpnd', 'ins_typ_count', 'total_ape_usd', 'tot_face_amt_usd', 'protection_gap', 'protection_income%', 'client_tenure', 'clm_6m_ratio']
+columns_of_interest = ['cur_age', 'adj_mthly_incm', 'no_dpnd', 'ins_typ_count', 'total_ape', 'tot_face_amt_usd', 'protection_gap', #'protection_income%',
+                        'client_tenure', 'clm_6m_ratio']
 
 # COMMAND ----------
 

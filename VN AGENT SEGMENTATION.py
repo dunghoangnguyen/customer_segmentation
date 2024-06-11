@@ -26,14 +26,37 @@ pd.set_option('display.max_columns', 200)
 
 # COMMAND ----------
 
-#change filter date and tier if needed every month
-max_date_str = '2023-12-31'
-min_last_mth = '2023-11-30'
-min_last_3m = '2023-09-30' # last 3 month
-min_date_str = '2022-12-31' # only last year
-max_date = pd.to_datetime(max_date_str)
+# Get the current date
+current_date = pd.Timestamp.now()
+
+# Calculate the last month-end
+last_month_end = current_date - pd.DateOffset(days=current_date.day)
+max_date = last_month_end
+max_date_str = last_month_end.strftime('%Y-%m-%d')
+
+# Calculate the last month end
+last_month = pd.to_datetime(max_date) - pd.DateOffset(days=max_date.day)
+min_last_mth = (last_month + pd.offsets.MonthEnd(0)).strftime('%Y-%m-%d')
+
+# Calculate the month-end of 3 months ago
+last_3_months_ago = max_date - pd.DateOffset(months=3)
+last_3_months_ago_month_end = last_3_months_ago + pd.offsets.MonthEnd(0)
+min_last_3mth = last_3_months_ago_month_end.strftime('%Y-%m-%d')
+
+# Calculate the month-end of exactly 1 year from max_date
+min_date = max_date - pd.DateOffset(years=1)
+min_date_month_end = min_date + pd.offsets.MonthEnd(0)
+min_date_str = min_date_month_end.strftime('%Y-%m-%d')
+
 mth_partition = max_date_str[:7]
 current_year = max_date.year
+snapshot = mth_partition.replace('-','') # used to filter lapse socre and persistency score
+
+print(f"max_date_str: {max_date_str}")
+print(f"min_last_mth: {min_last_mth}")
+print(f"min_last_3mth: {min_last_3mth}")
+print(f"min_date_str: {min_date_str}")
+print(f"snapshot: {snapshot}")
 
 # offline data, manual work for manuprolist and VN model output. please control the format to align with previous month
 # list of selected comp_pro
@@ -42,13 +65,12 @@ list_comp_pro = ('01', '98')
 manupro_level = ('S','G','P')
 # Convert yyyymmdd_MDRT_list.xlsx into vn_mdrt_yyyymmdd.csv and upload to DBx hive_metastore/default
 path_mdrt = 'vn_mdrt_20230920'
-snapshot = '202312' # used to filter lapse socre and persistency socre
 # Convert yyyymmdd_Platinum_list.xlsx into vn_mp_yyyymm.csv and upload to DBx hive_metastore/default
 path_manupro = 'vn_mp_' + snapshot
 
 # model output tables, change the date and data availability
 multiclass_path = '/dbfs/mnt/lab/vn/project/scratch/gen_rep_2023/prod_existing/11_multiclass_scored_base/multiclass_scored_' + snapshot + '.csv'
-leads_model_path = '/dbfs/mnt/lab/vn/project/scratch/gen_rep_2023/prod_existing/8_model_score_existing/'
+leads_model_path = '/dbfs/mnt/prod/vn/project/scratch/gen_rep_2023/prod_existing/8_model_score_existing/'
 lapse_path = '/dbfs/mnt/lab/vn/project/lapse/pre_lapse_deployment/lapse_mthly/lapse_score.parquet/'
 
 # pre_lapse_revamp_path = '/dbfs/mnt/lab/vn/project/lapse/pre_lapse_revamp_3/snapshots/snapshots_202309/'
@@ -57,7 +79,7 @@ lapse_path = '/dbfs/mnt/lab/vn/project/lapse/pre_lapse_deployment/lapse_mthly/la
 mp_link_url = 'https://manulife-mba.axonify.com/training/index.html#hub/search/community-1535/articles/1'
 
 #2024 MDRT requirment
-ape_benchmark = dict({'MDRT': 721626.600, 'COT': 2164879.800, 'TOT': 4329759.600, '^.^': 4329759.600})
+ape_benchmark = dict({'Silver': 60000.000, 'Gold': 360000.000, 'Platinum': 600000.000, 'MDRT': 721626.600, 'COT': 2164879.800, 'TOT': 4329759.600, '^.^': 4329759.600})
 
 # output files to
 out_path = '/dbfs/mnt/lab/vn/project/cpm/datamarts/'
@@ -68,7 +90,7 @@ cas_path = '/mnt/prod/Published/VN/Master/VN_PUBLISHED_CASM_CAS_SNAPSHOT_DB/'
 alt_path = '/mnt/prod/Curated/VN/Master/VN_CURATED_ANALYTICS_DB/'
 cpm_path = '/mnt/prod/Curated/VN/Master/VN_CURATED_CAMPAIGN_DB/'
 nbv_path = '/mnt/prod/Published/VN/Master/VN_PUBLISHED_CAMPAIGN_FILEBASED_DB/'
-gen_path = '/mnt/lab/vn/project/scratch/gen_rep_2023/prod_existing/'
+gen_path = '/mnt/prod/Curated/VN/Master/VN_CURATED_CUSTOMER_ANALYTICS_DB/'
 mod_path = '/mnt/lab/vn/project/lapse/pre_lapse_deployment/lapse_mthly/'
 
 tbl_src1 = 'TAGTDM_MTHEND/'
@@ -85,18 +107,22 @@ tbl_src11 = 'tclaim_details/'
 tbl_src12 = 'TPLANS/'
 tbl_src13 = 'TAMS_AGT_ACUMS_BK/'
 tbl_src14 = 'lapse_score.parquet/'
-tbl_src15 = '8_model_score_existing/'
+tbl_src15 = 'EXISTING_CUSTOMER_SCORE/'
 
 path_list = [dm_path, ams_path, alt_path,
              cas_path, cpm_path, #bak_path,
-             gen_path, mod_path, nbv_path]
+             gen_path, #mod_path, 
+             nbv_path]
 tbl_list = [tbl_src1, 
             #tbl_src2, tbl_src3, tbl_src4,
             tbl_src5, tbl_src6, tbl_src7,
             tbl_src8, tbl_src9, tbl_src10, 
             tbl_src11, tbl_src12,
-            tbl_src13, tbl_src14, tbl_src15]
+            tbl_src13, #tbl_src14, 
+            tbl_src15]
 
+
+# COMMAND ----------
 
 df_list = load_parquet_files(path_list, tbl_list)
 
@@ -118,8 +144,8 @@ df_list['TPLANS']           = df_list['TPLANS'][df_list['TPLANS']['image_date'] 
 agent_rfm = df_list['AGENT_RFM'][df_list['AGENT_RFM']['monthend_dt'] == mth_partition]
 
 # rename model_base_existing and lapse_score.parquet in df_list
-df_list['leads_existing_model'] = df_list.pop('8_model_score_existing')
-df_list['lapse'] = df_list.pop('lapse_score.parquet')
+df_list['leads_existing_model'] = df_list.pop('EXISTING_CUSTOMER_SCORE')
+#df_list['lapse'] = df_list.pop('lapse_score.parquet')
 
 tclient_details = df_list['TCLIENT_DETAILS'][['ID_NUM', 'CLI_NUM', 'BIRTH_DT', 'SEX_CODE', 'CLI_NM']].filter(F.to_date(F.col('BIRTH_DT')) < '2200-01-01')
 df_list['NBV_MARGIN'] = df_list.pop('NBV_MARGIN_HISTORIES')
@@ -140,7 +166,8 @@ generate_temp_view(df_list)
 # COMMAND ----------
 
 multiclass = pd.read_csv(multiclass_path) # new file for csv every month
-lapse = df_list['lapse'].filter(F.col('month_snapshot') == snapshot).toPandas()
+lapse = spark.read.parquet('/mnt/lab/vn/project/lapse/pre_lapse_deployment/lapse_mthly/lapse_score.parquet/') \
+        .filter(F.col('month_snapshot') == snapshot).toPandas()
 leads_existing_model = df_list['leads_existing_model'].filter(F.col('image_date') == max_date_str).toPandas()
 print("No of leads from HP model: ", leads_existing_model.shape[0])
 print("No of policies from lapse model: ", lapse.shape[0])
@@ -554,56 +581,81 @@ agt[agt['tier'] != 'Unranked']
 # APE
 f1 = master_df.filter((F.col('pol_stat_cd').isin(['A','N','R'])) == False)\
     .groupby('wa_cd_1')\
-    .agg(F.sum(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('adjust_ape'))).alias('last_mth_ape'),
-         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('adjust_ape'))).alias('last_yr_ape'),
+    .agg(F.sum(F.when(F.year(F.col('cvg_eff_dt'))==current_year-1, F.col('adjust_ape'))).alias('last_yr_ape'),
+         F.sum(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('adjust_ape'))).alias('last_mth_ape'),
+         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('adjust_ape'))).alias('last_12m_ape'),
          F.sum(F.when((F.col('last_n_month_eff_cvg').between(-3, -1)), F.col('adjust_ape'))).alias('last_3m_ape'),
          F.sum(F.when((F.col('last_n_month_eff_cvg').between(-6, -1)), F.col('adjust_ape'))).alias('last_6m_ape'),
-         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('adjust_ape'))).alias('last_9m_ape'))\
+         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('adjust_ape'))).alias('last_9m_ape'),
+         F.sum(F.when((F.year(F.col('cvg_eff_dt'))==current_year) & 
+                      (F.col('last_n_month_eff_cvg') <= -1), F.col('adjust_ape'))).alias('ape_ytd'),
+         F.sum(F.when(F.col('last_n_month_eff_cvg') <= -1, F.col('adjust_ape'))).alias('total_ape')
+         )\
     .fillna(0)
     #.toPandas())
 
 # NBV
 f2 = master_df.filter((F.col('pol_stat_cd').isin(['A','N','R'])) == False)\
     .groupby('wa_cd_1')\
-    .agg(F.sum(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('nbv'))).alias('last_mth_nbv'),
-         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('nbv'))).alias('last_yr_nbv'),
+    .agg(F.sum(F.when(F.year(F.col('cvg_eff_dt'))==current_year-1, F.col('nbv'))).alias('last_yr_nbv'),
+         F.sum(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('nbv'))).alias('last_mth_nbv'),
+         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('nbv'))).alias('last_12m_nbv'),
          F.sum(F.when((F.col('last_n_month_eff_cvg').between(-3, -1)), F.col('nbv'))).alias('last_3m_nbv'),
          F.sum(F.when((F.col('last_n_month_eff_cvg').between(-6, -1)), F.col('nbv'))).alias('last_6m_nbv'),
-         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('nbv'))).alias('last_9m_nbv'))\
+         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('nbv'))).alias('last_9m_nbv'),
+         F.sum(F.when((F.year(F.col('cvg_eff_dt'))==current_year) & 
+                      (F.col('last_n_month_eff_cvg') <= -1), F.col('nbv'))).alias('nbv_ytd'),
+         F.sum(F.when(F.col('last_n_month_eff_cvg') <= -1, F.col('nbv'))).alias('total_nbv')
+         )\
     .fillna(0)
     #.toPandas())
 
 # PO
 f3 = master_df.filter((F.col('pol_stat_cd').isin(['A','N','R'])) == False)\
     .groupby('wa_cd_1')\
-    .agg(F.countDistinct(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('po_num'))).alias('last_mth_po'),
-         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('po_num'))).alias('last_yr_po'),
+    .agg(F.countDistinct(F.when(F.year(F.col('cvg_eff_dt'))==current_year-1, F.col('po_num'))).alias('last_yr_po'),
+         F.countDistinct(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('po_num'))).alias('last_mth_po'),
+         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('po_num'))).alias('last_12m_po'),
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-3, -1)), F.col('po_num'))).alias('last_3m_po'),
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-6, -1)), F.col('po_num'))).alias('last_6m_po'),
-         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('po_num'))).alias('last_9m_po'))\
+         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('po_num'))).alias('last_9m_po'),
+         F.countDistinct(F.when((F.year(F.col('cvg_eff_dt'))==current_year) & 
+                      (F.col('last_n_month_eff_cvg') <= -1), F.col('po_num'))).alias('po_ytd'),
+         F.countDistinct(F.when(F.col('last_n_month_eff_cvg') <= -1, F.col('po_num'))).alias('total_po')
+         )\
     .fillna(0)
     #.toPandas())
 
 # Customer
 f4 = master_df.filter((F.col('pol_stat_cd').isin(['A','N','R'])) == False)\
     .groupby('wa_cd_1')\
-    .agg(F.countDistinct(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('cli_num'))).alias('last_mth_cus'),
-         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('cli_num'))).alias('last_yr_cus'),
+    .agg(F.countDistinct(F.when(F.year(F.col('cvg_eff_dt'))==current_year-1, F.col('cli_num'))).alias('last_yr_cus'),
+         F.countDistinct(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('cli_num'))).alias('last_mth_cus'),
+         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('cli_num'))).alias('last_12m_cus'),
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-3, -1)), F.col('cli_num'))).alias('last_3m_cus'),
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-6, -1)), F.col('cli_num'))).alias('last_6m_cus'),
-         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('cli_num'))).alias('last_9m_cus'))\
+         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('cli_num'))).alias('last_9m_cus'),
+         F.countDistinct(F.when((F.year(F.col('cvg_eff_dt'))==current_year) & 
+                      (F.col('last_n_month_eff_cvg') <= -1), F.col('cli_num'))).alias('cus_ytd'),
+         F.countDistinct(F.when(F.col('last_n_month_eff_cvg') <= -1, F.col('cli_num'))).alias('total_cus')
+         )\
     .fillna(0)
     #.toPandas())
 
 # Policy
 f5 = master_df.filter((F.col('pol_stat_cd').isin(['A','N','R'])) == False)\
     .groupby('wa_cd_1')\
-    .agg(F.countDistinct(F.col('pol_num')).alias('all_pol_cnt'),
+    .agg(F.countDistinct(F.when(F.year(F.col('cvg_eff_dt'))==current_year-1, F.col('pol_num'))).alias('last_yr_pol'),
+         F.countDistinct(F.col('pol_num')).alias('all_pol_cnt'),
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('pol_num'))).alias('last_mth_pol'),
-         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('pol_num'))).alias('last_yr_pol'),
+         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('pol_num'))).alias('last_12m_pol'),
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-3, -1)), F.col('pol_num'))).alias('last_3m_pol'),
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-6, -1)), F.col('pol_num'))).alias('last_6m_pol'),
-         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('pol_num'))).alias('last_9m_pol'))\
+         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('pol_num'))).alias('last_9m_pol'),
+         F.countDistinct(F.when((F.year(F.col('cvg_eff_dt'))==current_year) & 
+                      (F.col('last_n_month_eff_cvg') <= -1), F.col('pol_num'))).alias('pol_ytd'),
+         F.countDistinct(F.when(F.col('last_n_month_eff_cvg') <= -1, F.col('pol_num'))).alias('total_pol')
+         )\
     .fillna(0)
     #.toPandas())
 
@@ -611,7 +663,7 @@ f5 = master_df.filter((F.col('pol_stat_cd').isin(['A','N','R'])) == False)\
 f6 = master_df.filter(F.col('is_non_taken') == 1)\
     .groupby('wa_cd_1')\
     .agg(F.countDistinct(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('pol_num'))).alias('last_mth_NT'), 
-         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('pol_num'))).alias('last_yr_NT'), 
+         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('pol_num'))).alias('last_12m_NT'), 
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-3, -1)), F.col('pol_num'))).alias('last_3m_NT'), 
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-6, -1)), F.col('pol_num'))).alias('last_6m_NT'),
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('pol_num'))).alias('last_9m_NT'))\
@@ -622,7 +674,7 @@ f6 = master_df.filter(F.col('is_non_taken') == 1)\
 f7 = master_df.filter(F.col('rejected') == 1)\
     .groupby('wa_cd_1')\
     .agg(F.countDistinct(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('pol_num'))).alias('last_mth_rej'), 
-         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('pol_num'))).alias('last_yr_rej'), 
+         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('pol_num'))).alias('last_12m_rej'), 
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-3, -1)), F.col('pol_num'))).alias('last_3m_rej'), 
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-6, -1)), F.col('pol_num'))).alias('last_6m_rej'),
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('pol_num'))).alias('last_9m_rej'))\
@@ -633,7 +685,7 @@ f7 = master_df.filter(F.col('rejected') == 1)\
 f8 = master_df.filter(F.col('lapsed') == 1)\
     .groupby('wa_cd_1')\
     .agg(F.countDistinct(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('pol_num'))).alias('last_mth_lap'), 
-         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('pol_num'))).alias('last_yr_lap'), 
+         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('pol_num'))).alias('last_12m_lap'), 
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-3, -1)), F.col('pol_num'))).alias('last_3m_lap'), 
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-6, -1)), F.col('pol_num'))).alias('last_6m_lap'),
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('pol_num'))).alias('last_9m_lap'),
@@ -647,11 +699,16 @@ f8 = master_df.filter(F.col('lapsed') == 1)\
 # Product type
 f9 = master_df.filter((F.col('pol_stat_cd').isin(['A','N','R'])) == False)\
     .groupby('wa_cd_1')\
-    .agg(F.countDistinct(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('type'))).alias('last_mth_prd'), 
-         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('type'))).alias('last_yr_prd'), 
+    .agg(F.countDistinct(F.when(F.year(F.col('cvg_eff_dt'))==current_year-1, F.col('type'))).alias('last_yr_prd'),
+         F.countDistinct(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('type'))).alias('last_mth_prd'), 
+         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('type'))).alias('last_12m_prd'), 
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-3, -1)), F.col('type'))).alias('last_3m_prd'), 
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-6, -1)), F.col('type'))).alias('last_6m_prd'),
-         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('type'))).alias('last_9m_prd'))\
+         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('type'))).alias('last_9m_prd'),
+         F.sum(F.when((F.year(F.col('cvg_eff_dt'))==current_year) & 
+                      (F.col('last_n_month_eff_cvg') <= -1), F.col('type'))).alias('prd_ytd'),
+         F.sum(F.when(F.col('last_n_month_eff_cvg') <= -1, F.col('type'))).alias('total_prd')
+         )\
     .fillna(0)
     #.toPandas())
 
@@ -659,7 +716,7 @@ f9 = master_df.filter((F.col('pol_stat_cd').isin(['A','N','R'])) == False)\
 f10 = master_df.filter((F.col('pol_stat_cd').isin(['A','N','R'])) == False)\
     .groupby('wa_cd_1')\
     .agg(F.countDistinct(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('po_ins_rela'))).alias('last_mth_fam'), 
-         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('po_ins_rela'))).alias('last_yr_fam'), 
+         F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('po_ins_rela'))).alias('last_12m_fam'), 
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-3, -1)), F.col('po_ins_rela'))).alias('last_3m_fam'), 
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-6, -1)), F.col('po_ins_rela'))).alias('last_6m_fam'),
          F.countDistinct(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('po_ins_rela'))).alias('last_9m_fam'))\
@@ -670,11 +727,16 @@ f10 = master_df.filter((F.col('pol_stat_cd').isin(['A','N','R'])) == False)\
 f11 = master_df.filter((F.col('pol_stat_cd').isin(['A','N','R']) == False) &
                       (F.col('cvg_typ') == 'R'))\
     .groupby('wa_cd_1')\
-    .agg(F.sum(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('adjust_ape'))).alias('last_mth_rid'), 
-         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('adjust_ape'))).alias('last_yr_rid'), 
+    .agg(F.sum(F.when(F.year(F.col('cvg_eff_dt'))==current_year-1, F.col('adjust_ape'))).alias('last_yr_rid'),
+         F.sum(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('adjust_ape'))).alias('last_mth_rid'), 
+         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('adjust_ape'))).alias('last_12m_rid'), 
          F.sum(F.when((F.col('last_n_month_eff_cvg').between(-3, -1)), F.col('adjust_ape'))).alias('last_3m_rid'), 
          F.sum(F.when((F.col('last_n_month_eff_cvg').between(-6, -1)), F.col('adjust_ape'))).alias('last_6m_rid'),
-         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('adjust_ape'))).alias('last_9m_rid'))\
+         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('adjust_ape'))).alias('last_9m_rid'),
+         F.sum(F.when((F.year(F.col('cvg_eff_dt'))==current_year) & 
+                      (F.col('last_n_month_eff_cvg') <= -1), F.col('adjust_ape'))).alias('rid_ape_ytd'),
+         F.sum(F.when(F.col('last_n_month_eff_cvg') <= -1, F.col('adjust_ape'))).alias('total_rid_ape')
+         )\
     .fillna(0)
     #.toPandas())
 
@@ -682,11 +744,16 @@ f11 = master_df.filter((F.col('pol_stat_cd').isin(['A','N','R']) == False) &
 f12 = master_df.filter((F.col('pol_stat_cd').isin(['A','N','R']) == False) &
                       (F.col('repeated_sales') == 1))\
     .groupby('wa_cd_1')\
-    .agg(F.sum(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('adjust_ape'))).alias('last_mth_rep'), 
-         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('adjust_ape'))).alias('last_yr_rep'), 
+    .agg(F.sum(F.when(F.year(F.col('cvg_eff_dt'))==current_year-1, F.col('adjust_ape'))).alias('last_yr_rep'),
+         F.sum(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('adjust_ape'))).alias('last_mth_rep'), 
+         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('adjust_ape'))).alias('last_12m_rep'), 
          F.sum(F.when((F.col('last_n_month_eff_cvg').between(-3, -1)), F.col('adjust_ape'))).alias('last_3m_rep'), 
          F.sum(F.when((F.col('last_n_month_eff_cvg').between(-6, -1)), F.col('adjust_ape'))).alias('last_6m_rep'),
-         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('adjust_ape'))).alias('last_9m_rep'))\
+         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('adjust_ape'))).alias('last_9m_rep'),
+         F.sum(F.when((F.year(F.col('cvg_eff_dt'))==current_year) & 
+                      (F.col('last_n_month_eff_cvg') <= -1), F.col('adjust_ape'))).alias('rep_ape_ytd'),
+         F.sum(F.when(F.col('last_n_month_eff_cvg') <= -1, F.col('adjust_ape'))).alias('total_rep_ape')
+         )\
     .fillna(0)
     #.toPandas())
 
@@ -694,11 +761,16 @@ f12 = master_df.filter((F.col('pol_stat_cd').isin(['A','N','R']) == False) &
 f13 = master_df.filter((F.col('pol_stat_cd').isin(['A','N','R']) == False) &
                       (F.col('repeated_sales') == 1))\
     .groupby('wa_cd_1')\
-    .agg(F.sum(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('nbv'))).alias('last_mth_rep_nbv'), 
-         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('nbv'))).alias('last_yr_rep_nbv'), 
+    .agg(F.sum(F.when(F.year(F.col('cvg_eff_dt'))==current_year-1, F.col('nbv'))).alias('last_yr_rep_nbv'),
+         F.sum(F.when((F.col('last_n_month_eff_cvg') == -1), F.col('nbv'))).alias('last_mth_rep_nbv'), 
+         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-12, -1)), F.col('nbv'))).alias('last_12m_rep_nbv'), 
          F.sum(F.when((F.col('last_n_month_eff_cvg').between(-3, -1)), F.col('nbv'))).alias('last_3m_rep_nbv'), 
          F.sum(F.when((F.col('last_n_month_eff_cvg').between(-6, -1)), F.col('nbv'))).alias('last_6m_rep_nbv'),
-         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('nbv'))).alias('last_9m_rep_nbv'))\
+         F.sum(F.when((F.col('last_n_month_eff_cvg').between(-9, -1)), F.col('nbv'))).alias('last_9m_rep_nbv'),
+         F.sum(F.when((F.year(F.col('cvg_eff_dt'))==current_year) & 
+                      (F.col('last_n_month_eff_cvg') <= -1), F.col('nbv'))).alias('rep_nbv_ytd'),
+         F.sum(F.when(F.col('last_n_month_eff_cvg') <= -1, F.col('nbv'))).alias('total_rep_nbv')
+         )\
     .fillna(0)
     #.toPandas())
 
@@ -717,13 +789,15 @@ f = f1.join(f2, on='wa_cd_1', how='left')\
 
 # Avg ticket size
 # Avg po size
-f = f.withColumn('last_mth_pol_size', F.when(F.col('last_mth_pol') != 0, F.col('last_mth_ape')/F.col('last_mth_pol')).otherwise(1))\
-    .withColumn('last_yr_pol_size', F.when(F.col('last_yr_pol') != 0, F.col('last_yr_ape')/F.col('last_yr_pol')).otherwise(1))\
+f = f.withColumn('last_yr_pol_size', F.when(F.col('last_yr_pol') != 0, F.col('last_yr_ape')/F.col('last_yr_pol')).otherwise(1))\
+    .withColumn('last_mth_pol_size', F.when(F.col('last_mth_pol') != 0, F.col('last_mth_ape')/F.col('last_mth_pol')).otherwise(1))\
+    .withColumn('last_12m_pol_size', F.when(F.col('last_12m_pol') != 0, F.col('last_12m_ape')/F.col('last_12m_pol')).otherwise(1))\
     .withColumn('last_3m_pol_size', F.when(F.col('last_3m_pol') != 0, F.col('last_3m_ape')/F.col('last_3m_pol')).otherwise(1))\
     .withColumn('last_6m_pol_size', F.when(F.col('last_6m_pol') != 0, F.col('last_6m_ape')/F.col('last_6m_pol')).otherwise(1))\
     .withColumn('last_9m_pol_size', F.when(F.col('last_9m_pol') != 0, F.col('last_9m_ape')/F.col('last_9m_pol')).otherwise(1))\
-    .withColumn('last_mth_po_size', F.when(F.col('last_mth_po') != 0, F.col('last_mth_ape')/F.col('last_mth_po')).otherwise(1))\
     .withColumn('last_yr_po_size', F.when(F.col('last_yr_po') != 0, F.col('last_yr_ape')/F.col('last_yr_po')).otherwise(1))\
+    .withColumn('last_mth_po_size', F.when(F.col('last_mth_po') != 0, F.col('last_mth_ape')/F.col('last_mth_po')).otherwise(1))\
+    .withColumn('last_12m_po_size', F.when(F.col('last_12m_po') != 0, F.col('last_12m_ape')/F.col('last_12m_po')).otherwise(1))\
     .withColumn('last_3m_po_size', F.when(F.col('last_3m_po') != 0, F.col('last_3m_ape')/F.col('last_3m_po')).otherwise(1))\
     .withColumn('last_6m_po_size', F.when(F.col('last_6m_po') != 0, F.col('last_6m_ape')/F.col('last_6m_po')).otherwise(1))\
     .withColumn('last_9m_po_size', F.when(F.col('last_9m_po') != 0, F.col('last_9m_ape')/F.col('last_9m_po')).otherwise(1))\
@@ -733,24 +807,24 @@ f = f.withColumn('last_mth_pol_size', F.when(F.col('last_mth_pol') != 0, F.col('
 # Rejected percentage
 # Lapsed percentage
 f = f.withColumn('last_mth_NT_per', F.when(F.col('last_mth_pol') != 0, 1-(F.col('last_mth_NT')/F.col('last_mth_pol'))).otherwise(1))\
-    .withColumn('last_yr_NT_per', F.when(F.col('last_yr_pol') != 0, 1-(F.col('last_yr_NT')/F.col('last_yr_pol'))).otherwise(1))\
+    .withColumn('last_12m_NT_per', F.when(F.col('last_12m_pol') != 0, 1-(F.col('last_12m_NT')/F.col('last_12m_pol'))).otherwise(1))\
     .withColumn('last_3m_NT_per', F.when(F.col('last_3m_pol') != 0, 1-(F.col('last_3m_NT')/F.col('last_3m_pol'))).otherwise(1))\
     .withColumn('last_6m_NT_per', F.when(F.col('last_6m_pol') != 0, 1-(F.col('last_6m_NT')/F.col('last_6m_pol'))).otherwise(1))\
     .withColumn('last_9m_NT_per', F.when(F.col('last_9m_pol') != 0, 1-(F.col('last_9m_NT')/F.col('last_9m_pol'))).otherwise(1))\
     .withColumn('last_mth_rej_per', F.when(F.col('last_mth_pol') != 0, 1-(F.col('last_mth_rej')/F.col('last_mth_pol'))).otherwise(1))\
-    .withColumn('last_yr_rej_per', F.when(F.col('last_yr_pol') != 0, 1-(F.col('last_yr_rej')/F.col('last_yr_pol'))).otherwise(1))\
+    .withColumn('last_12m_rej_per', F.when(F.col('last_12m_pol') != 0, 1-(F.col('last_12m_rej')/F.col('last_12m_pol'))).otherwise(1))\
     .withColumn('last_3m_rej_per', F.when(F.col('last_3m_pol') != 0, 1-(F.col('last_3m_rej')/F.col('last_3m_pol'))).otherwise(1))\
     .withColumn('last_6m_rej_per', F.when(F.col('last_6m_pol') != 0, 1-(F.col('last_6m_rej')/F.col('last_6m_pol'))).otherwise(1))\
     .withColumn('last_9m_rej_per', F.when(F.col('last_9m_pol') != 0, 1-(F.col('last_9m_rej')/F.col('last_9m_pol'))).otherwise(1))\
     .withColumn('last_mth_lap_per', F.when(F.col('last_mth_pol') != 0, 1-(F.col('last_mth_lap')/F.col('last_mth_pol'))).otherwise(1))\
-    .withColumn('last_yr_lap_per', F.when(F.col('last_yr_pol') != 0, 1-(F.col('last_yr_lap')/F.col('last_yr_pol'))).otherwise(1))\
+    .withColumn('last_12m_lap_per', F.when(F.col('last_12m_pol') != 0, 1-(F.col('last_12m_lap')/F.col('last_12m_pol'))).otherwise(1))\
     .withColumn('last_3m_lap_per', F.when(F.col('last_3m_pol') != 0, 1-(F.col('last_3m_lap')/F.col('last_3m_pol'))).otherwise(1))\
     .withColumn('last_6m_lap_per', F.when(F.col('last_6m_pol') != 0, 1-(F.col('last_6m_lap')/F.col('last_6m_pol'))).otherwise(1))\
     .withColumn('last_9m_lap_per', F.when(F.col('last_9m_pol') != 0, 1-(F.col('last_9m_lap')/F.col('last_9m_pol'))).otherwise(1))\
     .withColumn('14m_per', F.when(F.col('lap_14m_pol') != 0, 1-(F.col('lap_14m_pol')/F.col('all_pol_cnt'))).otherwise(1))\
     .withColumn('20m_per', F.when(F.col('lap_20m_pol') != 0, 1-(F.col('lap_20m_pol')/F.col('all_pol_cnt'))).otherwise(1))\
     .withColumn('26m_per', F.when(F.col('lap_26m_pol') != 0, 1-(F.col('lap_26m_pol')/F.col('all_pol_cnt'))).otherwise(1))\
-    .withColumn('12M_NT_rate', F.when(F.col('last_yr_NT') != 0, 1-(F.col('last_yr_NT')/F.col('last_yr_pol'))).otherwise(1))\
+    .withColumn('12M_NT_rate', F.when(F.col('last_12m_NT') != 0, 1-(F.col('last_12m_NT')/F.col('last_12m_pol'))).otherwise(1))\
     .fillna(1)
 
 f.filter(F.col('wa_cd_1').isin(['10193','10539'])).display()
@@ -958,7 +1032,10 @@ final[final['agt_cd'].isin(['10193','10539'])]
 
 # COMMAND ----------
 
+final['gap_to_next_tier'] = final['next_tier_benchmark'] - final['ape_ytd'].fillna(0)
+final['gap_to_next_tier'] = final['gap_to_next_tier'].map(lambda x: 0 if x < 0 else x)
 
+final[final['agt_cd'].isin(['10193','10539'])]
 
 # COMMAND ----------
 
