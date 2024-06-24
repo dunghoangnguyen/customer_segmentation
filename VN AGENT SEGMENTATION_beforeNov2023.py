@@ -26,16 +26,19 @@ pd.set_option('display.max_columns', 200)
 
 # COMMAND ----------
 
-# Get the current date
-current_date = pd.Timestamp.now()
+# Set the number of months going backward
+x = 7  # Replace 1 with the desired number of months
 
 # Calculate the last month-end
+current_date = pd.Timestamp.now()
 last_month_end = current_date - pd.DateOffset(days=current_date.day)
+last_month_end = last_month_end - pd.DateOffset(months=x)
+last_month_end = last_month_end + pd.offsets.MonthEnd(0)
 max_date = last_month_end
 max_date_str = last_month_end.strftime('%Y-%m-%d')
 
-# Calculate the last month end
-last_month = pd.to_datetime(max_date) - pd.DateOffset(days=max_date.day)
+# Calculate the last month end based on the value of x
+last_month = last_month_end - pd.DateOffset(months=1) + pd.offsets.MonthEnd(0)
 min_last_mth = (last_month + pd.offsets.MonthEnd(0)).strftime('%Y-%m-%d')
 
 # Calculate the month-end of 3 months ago
@@ -92,8 +95,9 @@ cpm_path = '/mnt/prod/Curated/VN/Master/VN_CURATED_CAMPAIGN_DB/'
 nbv_path = '/mnt/prod/Published/VN/Master/VN_PUBLISHED_CAMPAIGN_FILEBASED_DB/'
 gen_path = '/mnt/prod/Curated/VN/Master/VN_CURATED_CUSTOMER_ANALYTICS_DB/'
 mod_path = '/mnt/lab/vn/project/lapse/pre_lapse_deployment/lapse_mthly/'
+mod2_path = '/mnt/lab/vn/project/scratch/gen_rep_2023/prod_existing/'
 
-tbl_src1 = 'TAGTDM_MTHEND/'
+tbl_src1 = 'TAGTDM_MTHEND_backup/'
 #tbl_src2 = 'TAMS_CANDIDATES/'
 #tbl_src3 = 'tams_locations/'
 #tbl_src4 = 'TAMS_AGENTS/'
@@ -107,11 +111,11 @@ tbl_src11 = 'tclaim_details/'
 tbl_src12 = 'TPLANS/'
 tbl_src13 = 'TAMS_AGT_ACUMS_BK/'
 tbl_src14 = 'lapse_score.parquet/'
-tbl_src15 = 'EXISTING_CUSTOMER_SCORE/'
+tbl_src15 = '8_model_score_existing/'
 
 path_list = [dm_path, ams_path, alt_path,
              cas_path, cpm_path, #bak_path,
-             gen_path, #mod_path, 
+             gen_path, mod2_path, 
              nbv_path]
 tbl_list = [tbl_src1, 
             #tbl_src2, tbl_src3, tbl_src4,
@@ -135,7 +139,8 @@ df_list = load_parquet_files(path_list, tbl_list)
 
 # Select data from snapshot month
 #df_list['TAGTDM_MTHEND']    = df_list.pop('TAGTDM_MTHEND_backup')
-df_list['TAGTDM_MTHEND']    = df_list['TAGTDM_MTHEND'][df_list['TAGTDM_MTHEND']['image_date'] == max_date_str]
+df_list['TAGTDM_MTHEND_backup']    = df_list['TAGTDM_MTHEND_backup'][df_list['TAGTDM_MTHEND_backup']['image_date'] == max_date_str]
+df_list['TAGTDM_MTHEND'] = df_list.pop('TAGTDM_MTHEND_backup')
 df_list['TPOLIDM_MTHEND']   = df_list['TPOLIDM_MTHEND'][df_list['TPOLIDM_MTHEND']['image_date'] == max_date_str]
 df_list['TCOVERAGES']       = df_list['TCOVERAGES'][df_list['TCOVERAGES']['image_date'] == max_date_str]
 df_list['TCLIENT_DETAILS']  = df_list['TCLIENT_DETAILS'][df_list['TCLIENT_DETAILS']['image_date'] == max_date_str]
@@ -144,7 +149,7 @@ df_list['TPLANS']           = df_list['TPLANS'][df_list['TPLANS']['image_date'] 
 agent_rfm = df_list['AGENT_RFM'][df_list['AGENT_RFM']['monthend_dt'] == mth_partition]
 
 # rename model_base_existing and lapse_score.parquet in df_list
-df_list['leads_existing_model'] = df_list.pop('EXISTING_CUSTOMER_SCORE')
+df_list['leads_existing_model'] = df_list.pop('8_model_score_existing')
 #df_list['lapse'] = df_list.pop('lapse_score.parquet')
 
 tclient_details = df_list['TCLIENT_DETAILS'][['ID_NUM', 'CLI_NUM', 'BIRTH_DT', 'SEX_CODE', 'CLI_NM']].filter(F.to_date(F.col('BIRTH_DT')) < '2200-01-01')
@@ -160,6 +165,13 @@ generate_temp_view(df_list)
 
 # COMMAND ----------
 
+# MAGIC %sql
+# MAGIC
+# MAGIC select count(*) agents
+# MAGIC from   tagtdm_mthend
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ### Step 2. Load dependency model outputs
 
@@ -169,6 +181,7 @@ multiclass = pd.read_csv(multiclass_path) # new file for csv every month
 lapse = spark.read.parquet('/mnt/lab/vn/project/lapse/pre_lapse_deployment/lapse_mthly/lapse_score.parquet/') \
         .filter(F.col('month_snapshot') == snapshot).toPandas()
 leads_existing_model = df_list['leads_existing_model'].filter(F.col('image_date') == max_date_str).toPandas()
+print("No of leads from multiclass model: ", multiclass.shape[0])
 print("No of leads from HP model: ", leads_existing_model.shape[0])
 print("No of policies from lapse model: ", lapse.shape[0])
 #leads_existing_model.head(2)
@@ -210,12 +223,9 @@ with sbw_lst as (
     having no_sbw_completed > 0
 )
 select distinct
-        agt.agt_code, agt_nm, agt_join_dt, agt_stat_code, br_code, can_num, chnl_cd, cntrct_eff_dt, comp_prvd_num, fc_ind, iqa_ind, mba_ind, mdrt_ind, pend_cd, rank_code, recrut_by, stat_cd, agt_stat, team_code, trmn_dt, trmn_reasn, unit_code, agt_term_dt, birth_dt, email_addr, id_num, sex_code as sex_code_agt, loc_cd, loc_desc, channel, edu_info, highest_edu, aprv_dt_by_mof, prd_cls_typ, mgr_cd, stru_grp_cd, cmp_ind, epos_ind, agent_group, agent_group_desc, dtk_ind, case mpro_title
-            when 'S' then 'Silver'
-            when 'G' then 'Gold'
-            when 'P' then 'Platinum'
-        end as mpro_title,
-        mpro_title_eff_dt, mpro_title_pending_eff_dt, mpro_termination_dt, mar_stat_cd, ins_exp_ind,
+        agt.agt_code, agt_nm, agt_join_dt, agt_stat_code, br_code, can_num, chnl_cd, cntrct_eff_dt, comp_prvd_num, fc_ind, iqa_ind, mba_ind, mdrt_ind, pend_cd, rank_code, recrut_by, stat_cd, agt_stat, team_code, trmn_dt, trmn_reasn, unit_code, agt_term_dt, birth_dt, email_addr, id_num, sex_code as sex_code_agt, loc_cd, loc_desc, channel, edu_info, highest_edu, aprv_dt_by_mof, prd_cls_typ, mgr_cd, stru_grp_cd, cmp_ind, epos_ind, agent_group, agent_group_desc, dtk_ind, '' as mpro_title,
+        cast(null as date) as mpro_title_eff_dt, cast(null as date) as mpro_title_pending_eff_dt, cast(null as date) as mpro_termination_dt, 
+        mar_stat_cd, ins_exp_ind,
         nvl(mdrt.` Ranking `,
             nvl(case mpro_title
                     when 'S' then 'Silver'
@@ -325,7 +335,7 @@ where   agt.agt_code is not null
     or  cvg_eff_dt > '{1}';
 '''.format(max_date_str, min_last_mth)
 master_df = sql_to_df(sql_string, 1, spark)
-print("No coverages selected: ", master_df.count())
+#print("No coverages selected: ", master_df.count())
 #print("No null 'agt_join_dt': ", master_df.filter(F.col('agt_join_dt').isNull()).count())
 
 # Convert all DecimalType columns to FloatType
@@ -528,6 +538,11 @@ master_df = master_df.filter((F.col('max_date') >= F.col('cvg_eff_dt')) & (F.col
              .orderBy('pol_num')
 
 master_df.filter(F.col('wa_cd_1').isin(['10193','10539'])).display()
+
+# COMMAND ----------
+
+# Check the image date before saving
+print(max_date_str)
 
 # COMMAND ----------
 

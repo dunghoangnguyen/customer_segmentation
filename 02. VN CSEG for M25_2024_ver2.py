@@ -26,9 +26,10 @@ pd.set_option('display.max_columns', 200)
 
 # COMMAND ----------
 
-image_date = '2024-04-30'
+image_date = '2024-05-31'
 image_date_sht = image_date[:7].replace('-', '')
 image_year = int(image_date[:4])
+#ex_rate = 23.145
 
 cseg_path = f'/mnt/prod/Curated/VN/Master/VN_CURATED_ANALYTICS_DB/INCOME_BASED_DECILE_AGENCY/image_date={image_date}'
 aseg_path = f'/mnt/lab/vn/project/cpm/datamarts/TPARDM_MTHEND/image_date={image_date}'
@@ -52,15 +53,22 @@ print(image_date, image_date_sht, image_year)
 
 # COMMAND ----------
 
-cseg_df = spark.read.parquet(f'{cseg_path}').toPandas()
-aseg_df = spark.read.parquet(f'{aseg_path}').toPandas()
-target_activation_df = spark.read.parquet(f'{target_path}')
-target_activation_pd = target_activation_df.toPandas()
+# Load Parquet files into Spark df's and then convert them into Pandas'
+#cseg_df = spark.read.parquet(f'{cseg_path}').toPandas()
+#aseg_df = spark.read.parquet(f'{aseg_path}').toPandas()
+#target_activation_df = spark.read.parquet(f'{target_path}')
+#target_activation_pd = target_activation_df.toPandas()
 
-mclass_df = spark.read.csv(f'{mclass_path}multiclass_scored_{image_date_sht}.csv', header=True, inferSchema=True).toPandas()
+#mclass_df = spark.read.csv(f'{mclass_path}multiclass_scored_{image_date_sht}.csv', header=True, inferSchema=True).toPandas()
+
+# Load Parquet files directly into Pandas DataFrames
+cseg_df = pd.read_parquet(f'/dbfs/{cseg_path}')
+aseg_df = pd.read_parquet(f'/dbfs/{aseg_path}')
+target_activation_pd = pd.read_parquet(f'/dbfs/{target_path}')
+mclass_df = pd.read_csv(f'/dbfs/{mclass_path}multiclass_scored_{image_date_sht}.csv')
 
 # List of columns to drop: 'channel','cur_age_y','rn','loc_code','__index_level_0__'
-target_activation_pd.drop(columns=['__index_level_0__'], inplace=True)
+#target_activation_pd.drop(columns=['__index_level_0__'], inplace=True)
 #target_activation_pd.rename(columns={'cur_age_x': 'cur_age', 'tier': 'current_tier', 'channel_final': 'channel', 'protection_gap_v2': 'protection_gap'}, inplace=True)
 print('# customers incl. 0 APE:', target_activation_pd.shape[0])
 # Remove customers having 0 APE and customers who are agents
@@ -71,8 +79,7 @@ print('# customers excl. 0 APE:', target_activation_pd.shape[0])
 # COMMAND ----------
 
 # Temporarily add the 'total_ape' for selling agents until it's added to the Agent Segmentation
-policy_df = spark.read.parquet(policy_path)
-policy_df = policy_df.filter((F.col('pol_stat_cd').isin(['A','N','R'])) == False)
+policy_df = spark.read.parquet(policy_path).filter((F.col('pol_stat_cd').isin(['A','N','R'])) == False)
 
 agt_tot_ape_df = policy_df.groupby('wa_code')\
     .agg(
@@ -81,14 +88,14 @@ agt_tot_ape_df = policy_df.groupby('wa_code')\
 
 # COMMAND ----------
 
-# TEmporarily add the 'claim_6m_cnt' and 'claim_6m_amt' for customers until they're added to the Customer Segmentations
-claim_df = spark.read.parquet(claim_path)
-claim_df = claim_df.filter(
+# Temporarily add the 'claim_6m_cnt' and 'claim_6m_amt' for customers until they're added to the Customer Segmentations
+claim_df = spark.read.parquet(claim_path) \
+.filter(
     (F.months_between(F.col('CLM_APROV_DT'), F.add_months(F.to_date(F.lit(image_date), 'yyyy-MM-dd'), -6)) <= 6) &
     (F.col('CLM_APROV_DT') <= F.to_date(F.lit(image_date), 'yyyy-MM-dd')) &
     (F.col('CLM_STAT_CODE').isin(['A'])) &
     (F.col('CLM_CODE').isin([3, 7, 9, 11, 27, 28, 29, 36, 38, 50, 51]))
-).select('POL_NUM','CLM_ID','CLM_APROV_AMT', 'CLM_APROV_DT')\
+).select('POL_NUM', 'CLM_ID', 'CLM_APROV_AMT', 'CLM_APROV_DT')
     
 # Add columns for the last claim date and amount
 window_spec = Window.partitionBy('POL_NUM').orderBy(F.col('CLM_APROV_DT').desc())
@@ -121,9 +128,9 @@ claim_po_df = policy_df.join(claim_df, on='pol_num')\
         F.first('clm_lst_amt').cast('float').alias('clm_lst_amt')
     ).dropDuplicates()
     
-claim_po_df = claim_po_df.toPandas()
+claim_po_pd = claim_po_df.toPandas()
 
-claim_po_df.shape
+print(claim_po_pd.shape)
 
 # COMMAND ----------
 
@@ -133,14 +140,44 @@ claim_po_df.shape
 # COMMAND ----------
 
 # Get only multiclass scores that have been successfully deployed
-mclass_df = mclass_df[mclass_df['DEPLOYMENT_APPROVAL_STATUS']=='APPROVED']
-mclass_df['po_num'] = mclass_df['po_num'].astype(str)
+#mclass_df = mclass_df[mclass_df['DEPLOYMENT_APPROVAL_STATUS']=='APPROVED']
+#mclass_df['po_num'] = mclass_df['po_num'].astype(str)
 
-target_po_list = target_activation_pd['po_num'].unique()
-target_agt_list = target_activation_pd['agt_code'].unique()
+#target_po_list = target_activation_pd['po_num'].unique()
+#target_agt_list = target_activation_pd['agt_code'].unique()
 
-cseg_df = cseg_df[cseg_df['po_num'].isin(target_po_list)]
-aseg_df = aseg_df[aseg_df['agt_cd'].isin(target_agt_list)]
+#cseg_df = cseg_df[cseg_df['po_num'].isin(target_po_list)]
+#aseg_df = aseg_df[aseg_df['agt_cd'].isin(target_agt_list)]
+try:
+    # Get only multiclass scores that have been successfully deployed
+    mclass_df = mclass_df[mclass_df['DEPLOYMENT_APPROVAL_STATUS']=='APPROVED']
+    mclass_df['po_num'] = mclass_df['po_num'].astype(str)
+
+    target_po_list = target_activation_pd['po_num'].unique()
+    target_agt_list = target_activation_pd['agt_code'].unique()
+
+    # Filter cseg_df and aseg_df based on target_po_list and target_agt_list
+    if target_po_list.size > 0:  # Check if the NumPy array is not empty
+        cseg_df = cseg_df[cseg_df['po_num'].isin(target_po_list)]
+        print("cseg_df:", cseg_df.shape[0])
+    else:
+        # Handle the case where target_po_list is empty
+        cseg_df = cseg_df.head(0)  # Create an empty DataFrame
+        print("cseg_df is empty!")
+
+    if target_agt_list.size > 0:  # Check if the NumPy array is not empty
+        aseg_df = aseg_df[aseg_df['agt_cd'].isin(target_agt_list)]
+        print("aseg_df:", aseg_df.shape[0])
+    else:
+        # Handle the case where target_agt_list is empty
+        aseg_df = aseg_df.head(0)  # Create an empty DataFrame
+        print("aseg_df is empty!")
+
+except Exception as e:
+    # Handle the exception, e.g., log the error, revert to a default behavior, or raise a custom exception
+    print(f"An error occurred: {e}")
+    # Optionally, revert to a default behavior or raise a custom exception
+    # raise CustomException("An error occurred while filtering DataFrames")
 
 # COMMAND ----------
 
@@ -163,10 +200,10 @@ cseg_cols = ['po_num','sex_code','dpnd_child_ind','dpnd_spouse_ind','existing_vi
 aseg_cols = ['agt_cd','next_tier','next_tier_benchmark','gap_to_next_tier','all_pol_cnt'
 ]
 
-#.merge(cseg_df[cseg_cols], on='po_num', how='left')\
+#Only add this line if there's a field required: .merge(cseg_df[cseg_cols], on='po_num', how='left')\
 merged_target_activation_df = target_activation_pd\
   .merge(mclass_df[mclass_cols], on='po_num', how='left')\
-  .merge(claim_po_df, on='po_num', how='left')\
+  .merge(claim_po_pd, on='po_num', how='left')\
   .merge(aseg_df[aseg_cols], left_on='agt_code', right_on='agt_cd', how='left')\
   .merge(agt_tot_ape_df, left_on='agt_code', right_on='wa_code', how='left')
 
@@ -182,7 +219,7 @@ for col in numeric_columns:
 # Add 6m claim over APE ratio column
 merged_target_activation_df['clm_6m_ratio'] = merged_target_activation_df['clm_6m_amt']*100 / merged_target_activation_df['total_ape'].round(4)
 
-# Fill NaN with N/A for category and object columns
+# Fill NaN with N/A for category and other object/string columns
 categorical_columns = merged_target_activation_df.select_dtypes(include=['category']).columns
 
 for col in categorical_columns:
@@ -191,7 +228,9 @@ for col in categorical_columns:
 
 merged_target_activation_df.drop_duplicates(inplace=True)
 
+# Check the size of the target activation again
 print(merged_target_activation_df.shape)
+# Print out samples
 merged_target_activation_df.head(2)
 
 # COMMAND ----------

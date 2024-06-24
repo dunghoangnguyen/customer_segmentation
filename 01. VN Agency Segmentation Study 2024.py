@@ -23,7 +23,7 @@ pd.set_option('display.max_columns', 200)
 
 # COMMAND ----------
 
-cutoff_date= '2024-04-30'
+cutoff_date= '2024-05-31'
 mth_partition = cutoff_date[:7] #'2024-03'
 
 in_path = '/dbfs/mnt/lab/vn/project/cpm/datamarts/'
@@ -400,16 +400,21 @@ cols=['cli_num','cur_age','actvnes_stat','new_exist_stat','nat_code','occp_clas'
 # Should only reload when there's update in the target customer segment
 filtered_cus_df = cus_df.filter(cus_df['cli_num'].isin(fil_cus_list)).select(*cols)
 
-filtered_cus_pd = filtered_cus_df.toPandas()
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC <strong> Store and reload the filtered_cus_df to save time</strong>
+# MAGIC ### Write Spark dataframe to parquet and reload as Pandas to save time from conversion
 
 # COMMAND ----------
 
-filtered_cus_pd.to_parquet(f'/dbfs/mnt/lab/vn/project/scratch/agent_activation/filtered_cus.parquet', engine='pyarrow')
+filtered_cus_df.coalesce(1).write.mode('overwrite').parquet(f'/mnt/lab/vn/project/scratch/agent_activation/filtered_cus_df/')
+
+filtered_cus_pd = pd.read_parquet(f'/dbfs/mnt/lab/vn/project/scratch/agent_activation/filtered_cus_df/')
+
+# COMMAND ----------
+
+#filtered_cus_pd.to_parquet(f'/dbfs/mnt/lab/vn/project/scratch/agent_activation/filtered_cus.parquet', engine='pyarrow')
 #filtered_cus_pd = pd.read_parquet(f'/dbfs/mnt/lab/vn/project/scratch/agent_activation/filtered_cus.parquet')
 
 # COMMAND ----------
@@ -484,21 +489,21 @@ target_agents['BR_NM_grouped'].value_counts().reset_index()
 # COMMAND ----------
 
 # Filter for target agents
-target_cus_agents_df = cus_agent_merged_df[cus_agent_merged_df['is_target_agent'] == 1]
+target_cus_agents_df = cus_agent_merged_df[cus_agent_merged_df['f_target_agent'] == 1]
 
 # Split the DataFrame into active and inactive agents
 active_cus_agents_df = target_cus_agents_df[target_cus_agents_df['f_agt_inactive'] == 0]
 inactive_cus_agents_df = target_cus_agents_df[target_cus_agents_df['f_agt_inactive'] == 1]
 
-# Group by 'f_agt_inactive' and calculate the mean, sum or count of the relevant columns
-profile = target_cus_agents_df.groupby('f_agt_inactive').agg({
+# Group by 'f_target_agent' and calculate the mean, sum or count of the relevant columns
+profile = target_cus_agents_df.groupby('f_target_agent').agg({
     'po_num':'nunique',    
     'no_dpnd': 'mean',  # Average number of dependent family members
-    'cur_age_x': 'mean',  # Average age
+    'cur_age': 'mean',  # Average age
     'adj_mthly_incm': 'mean',  # Average income
     'client_tenure': 'mean',  # Average vintage
-    'inforce_count': 'mean',  # Total product holding
-    'total_ape_usd': 'mean',  # Total APE
+    'inforce_pol': 'mean',  # Total product holding
+    'total_ape': 'mean',  # Total APE
     'rider_cnt': 'mean',  # Total rider holding
 }).reset_index()
 
@@ -515,11 +520,11 @@ profile
 profile_all_agents = cus_agent_merged_df.groupby('f_agt_inactive').agg({
     'po_num':'nunique',
     'no_dpnd': 'mean',  # Average number of dependent family members
-    'cur_age_x': 'mean',  # Average age
+    'cur_age': 'mean',  # Average age
     'adj_mthly_incm': 'mean',  # Average income
     'client_tenure': 'mean',  # Average vintage
-    'inforce_count': 'mean',  # Total product holding
-    'total_ape_usd': 'mean',  # Total APE
+    'inforce_pol': 'mean',  # Total product holding
+    'total_ape': 'mean',  # Total APE
     'rider_cnt': 'mean',  # Total rider holding
 }).reset_index()
 
@@ -560,10 +565,10 @@ def filter_agents(df, f_agt_inactive):
     # Define the conditions
     conditions = [
         (df['agt_tenure_mths_cat'] == '>1 year'),
-        (df['last_yr_ape_cat'].isin(['5-7k','7-10k','10k+'])),
+        (df['last_12m_ape_cat'].isin(['5-7k','7-10k','10k+'])),
         (df['cus_existing_cat'] == '>2 customers'),
         (df['14m_per_cat'] == '70%+') #,
-        #(df['last_yr_prd_cat'] == '> 2 product types'),
+        #(df['last_12m_prd_cat'] == '> 2 product types'),
         #(df['manager_0_active'] == 'Active')
     ]
 
@@ -596,13 +601,13 @@ filter_agents(inactive_agents_df, f_agt_inactive=1)
 
 # Define the columns used for profiling and their bins
 profile_columns = {
-     'no_dpnd': [0, 1, 2, 3, np.inf],  # Bins for number of dependents
-    'cur_age_x': [0, 25, 35, 55, np.inf],  # Bins for age
+    'no_dpnd': [0, 1, 2, 3, np.inf],  # Bins for number of dependents
+    'cur_age': [0, 25, 35, 55, np.inf],  # Bins for age
     'adj_mthly_incm': [0,1000, 2000, 3000, np.inf],  # Bins for income
-     'client_tenure': [0, 1, 2, 3, 4, 5, np.inf],  # Bins for client tenure
-     'inforce_count': [0, 1, 2, 3, np.inf],  # Bins for inforce count
-    'total_ape_usd': [0, 1000, 2000, 3000, np.inf],  # Bins for total APE
-     'rider_cnt': [0, 1, 2, 3,  np.inf],  # Bins for rider count
+    'client_tenure': [0, 1, 2, 3, 4, 5, np.inf],  # Bins for client tenure
+    'inforce_pol': [0, 1, 2, 3, np.inf],  # Bins for inforce count
+    'total_ape': [0, 1000, 2000, 3000, np.inf],  # Bins for total APE
+    'rider_cnt': [0, 1, 2, 3,  np.inf],  # Bins for rider count
 }
 
 def plot_composition(df, column, title, bins=None):
@@ -648,13 +653,14 @@ for column, bins in profile_columns.items():
 
 # COMMAND ----------
 
+#print(active_cus_agents_df.dtypes)
 # Get the top 15 cities for active and inactive agents
-top_cities_active = active_cus_agents_df['city'].value_counts().nlargest(15).index
-top_cities_inactive = inactive_cus_agents_df['city'].value_counts().nlargest(15).index
+top_cities_active = active_cus_agents_df['CITY'].value_counts().nlargest(15).index
+top_cities_inactive = inactive_cus_agents_df['CITY'].value_counts().nlargest(15).index
 
 # Replace the cities not in the top 15 with 'Other' for active and inactive agents
-active_cus_agents_df['city_grouped'] = active_cus_agents_df['city'].where(active_cus_agents_df['city'].isin(top_cities_active), 'Other')
-inactive_cus_agents_df['city_grouped'] = inactive_cus_agents_df['city'].where(inactive_cus_agents_df['city'].isin(top_cities_inactive), 'Other')
+active_cus_agents_df['city_grouped'] = active_cus_agents_df['CITY'].where(active_cus_agents_df['CITY'].isin(top_cities_active), 'Other')
+inactive_cus_agents_df['city_grouped'] = inactive_cus_agents_df['CITY'].where(inactive_cus_agents_df['CITY'].isin(top_cities_inactive), 'Other')
 
 # Plot the composition of the grouped cities for active and inactive agents
 plot_composition(active_cus_agents_df, 'city_grouped', "Grouped city composition (Active Agents)")
@@ -678,9 +684,9 @@ from pyspark.ml.linalg import Vectors
 
 spark = SparkSession.builder.getOrCreate()
 merged_df = spark.read.parquet(f'{out_path[5:]}merged_target_activation.parquet').where(F.col('agt_cd').isNotNull())
-
+#print(merged_df.columns)
 # Check for the number of unique active agents, excluding 'Pure_UCM' customers
-active_agt_list = merged_df.filter(F.col('pure_unassigned_label') != 'Pure_UCM')\
+active_agt_list = merged_df.filter(F.col('f_target_agent') == 1)\
                     .select('agt_cd').distinct().rdd.flatMap(lambda x: x).collect()
 print('# of agents:', len(active_agt_list))
 
@@ -694,13 +700,13 @@ print('# of agents:', len(active_agt_list))
 # Add a column to convert agent's tier to numeric (1-7)
 merged_df = merged_df.withColumn(
     "f_current_tier",
-     F.when(F.col("current_tier") == "Unranked" , F.lit(1))
-    .when(F.col("current_tier") == "Silver"   , F.lit(2))
-    .when(F.col("current_tier") == "Gold"     , F.lit(3))
-    .when(F.col("current_tier") == "Platinum" , F.lit(4))
-    .when(F.col("current_tier") == "MDRT"     , F.lit(5))
-    .when(F.col("current_tier") == "COT"      , F.lit(6))
-    .when(F.col("current_tier") == "TOT"      , F.lit(7))
+     F.when(F.col("agent_tier") == "Unranked" , F.lit(1))
+    .when(F.col("agent_tier") == "Silver"   , F.lit(2))
+    .when(F.col("agent_tier") == "Gold"     , F.lit(3))
+    .when(F.col("agent_tier") == "Platinum" , F.lit(4))
+    .when(F.col("agent_tier") == "MDRT"     , F.lit(5))
+    .when(F.col("agent_tier") == "COT"      , F.lit(6))
+    .when(F.col("agent_tier") == "TOT"      , F.lit(7))
     .otherwise(F.lit(0))
     ).withColumn(
     "agt_ape_usd",
@@ -711,11 +717,11 @@ merged_df = merged_df.withColumn(
 
 merged_pd = merged_df
 
-f_cols = ["segment", "current_tier", "br_nm", "agt_tenure_mths_cat", "cus_existing_cat", "last_yr_ape_cat", "14m_per_cat", "agt_cd",
-          "f_agt_inactive", "agt_ape_usd", "agt_tenure_mths", "14m_per", "last_yr_prd", "last_yr_ape", "1yr_agent_activeness", "po_num_count", "all_pol_cnt", "gap_to_next_tier", "1yr_agent_activeness_cat", "po_num_count_cat", "all_pol_cnt_cat", "gap_to_next_tier_cat", "first_sm_name", "rh_name"
+f_cols = ["segment", "agent_tier", "br_nm", "agt_tenure_mths_cat", "cus_existing_cat", "last_12m_ape_cat", "14m_per_cat", "agt_cd",
+          "f_agt_inactive", "agt_ape_usd", "agt_tenure_mths", "14m_per", "last_12m_prd", "last_12m_ape", "1yr_agent_activeness", "po_num_count", "all_pol_cnt", "gap_to_next_tier", "1yr_agent_activeness_cat", "po_num_count_cat", "all_pol_cnt_cat", "gap_to_next_tier_cat", "first_sm_name", "rh_name"
           ]
-n_cols = ["agt_ape_usd", "agt_tenure_mths", "14m_per", "last_yr_prd", "last_yr_ape", "1yr_agent_activeness", "po_num_count", "all_pol_cnt"]
-#c_cols = ["age_grp", "current_tier", "br_nm"]
+n_cols = ["agt_ape_usd", "agt_tenure_mths", "14m_per", "last_12m_prd", "last_12m_ape", "1yr_agent_activeness", "po_num_count", "all_pol_cnt"]
+#c_cols = ["age_grp", "agent_tier", "br_nm"]
 
 group_nm = ['Top Performers', 'High Performers', 'The Slackers']
 
@@ -726,8 +732,8 @@ percentile_threshold = [0.75, 0.25]  # Top 25%, 75% and the rest of agents
 agt_ape_usd_high, agt_ape_usd_moderate = np.quantile(merged_pd["agt_ape_usd"], percentile_threshold)
 agt_tenure_mths_high, agt_tenure_mths_moderate = np.quantile(merged_pd["agt_tenure_mths"], percentile_threshold)
 m14_per_high, m14_per_moderate = np.quantile(merged_pd["14m_per"], percentile_threshold)
-last_yr_prd_high, last_yr_prd_moderate = np.quantile(merged_pd["last_yr_prd"], percentile_threshold)
-last_yr_ape_high, last_yr_ape_moderate = np.quantile(merged_pd["last_yr_ape"], percentile_threshold)
+last_yr_prd_high, last_yr_prd_moderate = np.quantile(merged_pd["last_12m_prd"], percentile_threshold)
+last_yr_ape_high, last_yr_ape_moderate = np.quantile(merged_pd["last_12m_ape"], percentile_threshold)
 yr1_agent_activeness_high, yr1_agent_activeness_moderate = np.quantile(merged_pd["1yr_agent_activeness"], percentile_threshold)
 po_num_count_high, po_num_count_moderate = np.quantile(merged_pd["po_num_count"], percentile_threshold)
 all_pol_cnt_high, all_pol_cnt_moderate = np.quantile(merged_pd["all_pol_cnt"], percentile_threshold)
@@ -738,8 +744,8 @@ def assign_segment(row):
         agt_ape_usd,
         agt_tenure_mths,
         m14_per,
-        last_yr_prd,
-        last_yr_ape,
+        last_12m_prd,
+        last_12m_ape,
         yr1_agent_activeness,
         po_num_count,
         all_pol_cnt,
@@ -810,9 +816,9 @@ for group in group_nm:
 
 # Save raw data for future analysis
 merged_pd.drop(columns=['__index_level_0__','f_current_tier'], inplace=True)
-merged_pd.to_csv(f'{out_path}merged_segmentations.csv', header=True, index=False)
+#merged_pd.to_csv(f'{out_path}merged_segmentations.csv', header=True, index=False)
 ranked_agents.to_csv(f'{out_path}ranked_agents.csv', header=True, index=False)
 
 # COMMAND ----------
 
-ranked_agents.dtypes
+print(ranked_agents.dtypes)
